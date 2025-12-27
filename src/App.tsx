@@ -18,7 +18,8 @@ import {
   ArrowDownRight,
   ShoppingCart,
   Car,
-  Clock
+  Clock,
+  CheckCircle2
 } from 'lucide-react';
 
 // Firebase Imports
@@ -55,8 +56,8 @@ interface Resident {
 interface Bill {
   id: string;
   description: string;
-  budgetedValue: number; // Valor cobrado
-  actualValue: number;   // Valor real pago
+  budgetedValue: number;
+  actualValue: number;
   createdAt: number;
   type: BillType;
   monthId: string;
@@ -95,13 +96,16 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 const auth = getAuth(app);
 const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
-const APTO_ID = 'apartamento-final-v1';
+
+// ATENÇÃO: Este ID deve ser o mesmo das regras do Firebase (Rules)
+const APTO_ID = 'apartamento-producao-v1';
 const ADMIN_EMAIL = "edduducamargos@gmail.com";
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<'public' | 'admin'>('public');
+  const [statusMsg, setStatusMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
   
   const [residents, setResidents] = useState<Resident[]>([]);
   const [allBills, setAllBills] = useState<Bill[]>([]);
@@ -116,7 +120,17 @@ export default function App() {
     description: '', budgetedValue: '', actualValue: '', type: 'shared' as BillType, targetId: 'all'
   });
 
+  const [newCaixinha, setNewCaixinha] = useState({ description: '', value: '', type: 'credit' as 'credit' | 'debit' });
+
   const isAdmin = useMemo(() => user?.email === ADMIN_EMAIL, [user]);
+
+  // Limpar mensagem de status após 3 segundos
+  useEffect(() => {
+    if (statusMsg) {
+      const timer = setTimeout(() => setStatusMsg(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [statusMsg]);
 
   // 1. Lógica de Autenticação
   useEffect(() => {
@@ -139,17 +153,17 @@ export default function App() {
     const unsubBills = onSnapshot(billsRef, (s) => {
       const data = s.docs.map(d => ({ ...d.data(), id: d.id } as Bill));
       setAllBills(data.sort((a, b) => b.createdAt - a.createdAt));
-    });
+    }, (error) => console.error("Erro Firestore Bills:", error));
 
     const unsubResidents = onSnapshot(residentsRef, (s) => {
       const data = s.docs.map(d => ({ ...d.data(), id: d.id } as Resident));
       if (data.length === 0 && isAdmin) setupDefaultResidents();
       else setResidents(data.sort((a, b) => a.index - b.index));
-    });
+    }, (error) => console.error("Erro Firestore Residents:", error));
 
     const unsubReceipts = onSnapshot(receiptsRef, (s) => 
       setReceipts(s.docs.map(d => ({ ...d.data(), id: d.id } as ReceiptStatus)))
-    );
+    , (error) => console.error("Erro Firestore Receipts:", error));
 
     return () => { unsubBills(); unsubResidents(); unsubReceipts(); };
   }, [user, isAdmin]);
@@ -224,18 +238,48 @@ export default function App() {
   // Handlers
   const handleAddBill = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isAdmin || !newBill.description || !newBill.budgetedValue) return;
-    await addDoc(collection(db, 'artifacts', APTO_ID, 'public', 'data', 'bills'), {
-      description: newBill.description,
-      budgetedValue: parseFloat(newBill.budgetedValue),
-      actualValue: parseFloat(newBill.actualValue || newBill.budgetedValue),
-      type: newBill.type,
-      monthId: currentMonthId,
-      isPaid: false,
-      createdAt: Date.now(),
-      targetResidentId: newBill.type === 'individual' ? newBill.targetId : null
-    });
-    setNewBill({ description: '', budgetedValue: '', actualValue: '', type: 'shared', targetId: 'all' });
+    if (!isAdmin) {
+      setStatusMsg({ type: 'error', text: 'Apenas Eduardo pode lançar contas.' });
+      return;
+    }
+    if (!newBill.description || !newBill.budgetedValue) return;
+
+    try {
+      await addDoc(collection(db, 'artifacts', APTO_ID, 'public', 'data', 'bills'), {
+        description: newBill.description,
+        budgetedValue: parseFloat(newBill.budgetedValue),
+        actualValue: parseFloat(newBill.actualValue || newBill.budgetedValue),
+        type: newBill.type,
+        monthId: currentMonthId,
+        isPaid: false,
+        createdAt: Date.now(),
+        targetResidentId: newBill.type === 'individual' ? newBill.targetId : null
+      });
+      setNewBill({ description: '', budgetedValue: '', actualValue: '', type: 'shared', targetId: 'all' });
+      setStatusMsg({ type: 'success', text: 'Gasto lançado com sucesso!' });
+    } catch (err) {
+      console.error("Erro ao salvar:", err);
+      setStatusMsg({ type: 'error', text: 'Erro ao salvar no banco. Verifique as regras do Firebase.' });
+    }
+  };
+
+  const handleAddCaixinha = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !newCaixinha.description || !newCaixinha.value) return;
+    try {
+      await addDoc(collection(db, 'artifacts', APTO_ID, 'public', 'data', 'bills'), {
+        description: newCaixinha.description,
+        budgetedValue: newCaixinha.type === 'credit' ? parseFloat(newCaixinha.value) : 0,
+        actualValue: newCaixinha.type === 'debit' ? parseFloat(newCaixinha.value) : 0,
+        type: 'individual', // Usamos um tipo neutro para lançamentos manuais
+        monthId: currentMonthId,
+        createdAt: Date.now()
+      });
+      setNewCaixinha({ description: '', value: '', type: 'credit' });
+      setStatusMsg({ type: 'success', text: 'Movimentação registada!' });
+    } catch (err) {
+      setStatusMsg({ type: 'error', text: 'Erro ao registar na caixinha.' });
+    }
   };
 
   const toggleReceiptStatus = async (res: any) => {
@@ -266,6 +310,14 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-10">
       <div className="max-w-7xl mx-auto p-4 md:p-8">
         
+        {/* Status Toast */}
+        {statusMsg && (
+          <div className={`fixed top-5 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3 animate-in slide-in-from-top duration-300 ${statusMsg.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
+            {statusMsg.type === 'success' ? <CheckCircle2 size={20}/> : <AlertTriangle size={20}/>}
+            <span className="font-bold text-sm">{statusMsg.text}</span>
+          </div>
+        )}
+
         {/* Header & Nav */}
         <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
           <div className="flex items-center gap-4">
@@ -282,7 +334,7 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             {!user ? (
-              <button onClick={() => signInWithPopup(auth, provider)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg shadow-blue-100"><LogIn size={20} /> Login Admin</button>
+              <button onClick={() => signInWithPopup(auth, provider)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg shadow-blue-100 active:scale-95 transition-all"><LogIn size={20} /> Login Admin</button>
             ) : (
               <div className="flex items-center gap-4">
                 {isAdmin && (
@@ -315,8 +367,8 @@ export default function App() {
                 <h2 className="text-xl font-black mb-8 flex items-center gap-3 text-slate-800"><PlusCircle className="text-blue-600" /> Novo Gasto</h2>
                 <form onSubmit={handleAddBill} className="space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <input className="p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none" placeholder="Descrição (Ex: Romilda)" value={newBill.description} onChange={e => setNewBill({...newBill, description: e.target.value})} />
-                    <select className="p-4 bg-slate-100 border-none rounded-2xl font-black text-xs" value={newBill.type} onChange={e => setNewBill({...newBill, type: e.target.value as BillType})}>
+                    <input className="p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-2 focus:ring-blue-100" placeholder="Descrição (Ex: Romilda)" value={newBill.description} onChange={e => setNewBill({...newBill, description: e.target.value})} />
+                    <select className="p-4 bg-slate-100 border-none rounded-2xl font-black text-xs outline-none" value={newBill.type} onChange={e => setNewBill({...newBill, type: e.target.value as BillType})}>
                       <option value="shared">Dividido por 6</option>
                       <option value="rent">Aluguel (Proporcional)</option>
                       <option value="house_supplies">Compras Casa (Reembolso Menon)</option>
@@ -327,11 +379,11 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-1">
                        <label className="text-[10px] font-black text-slate-400 ml-4 uppercase">Valor Cobrado (Rateio)</label>
-                       <input type="number" step="0.01" className="w-full p-4 bg-blue-50 text-blue-700 border-none rounded-2xl font-black outline-none" placeholder="R$ 0,00" value={newBill.budgetedValue} onChange={e => setNewBill({...newBill, budgetedValue: e.target.value})} />
+                       <input type="number" step="0.01" className="w-full p-4 bg-blue-50 text-blue-700 border-none rounded-2xl font-black outline-none focus:ring-2 focus:ring-blue-200" placeholder="R$ 0,00" value={newBill.budgetedValue} onChange={e => setNewBill({...newBill, budgetedValue: e.target.value})} />
                     </div>
                     <div className="space-y-1">
                        <label className="text-[10px] font-black text-slate-400 ml-4 uppercase">Valor Pago (Real)</label>
-                       <input type="number" step="0.01" className="w-full p-4 bg-emerald-50 text-emerald-700 border-none rounded-2xl font-black outline-none" placeholder="R$ 0,00" value={newBill.actualValue} onChange={e => setNewBill({...newBill, actualValue: e.target.value})} />
+                       <input type="number" step="0.01" className="w-full p-4 bg-emerald-50 text-emerald-700 border-none rounded-2xl font-black outline-none focus:ring-2 focus:ring-emerald-200" placeholder="R$ 0,00" value={newBill.actualValue} onChange={e => setNewBill({...newBill, actualValue: e.target.value})} />
                     </div>
                   </div>
                   <div className="flex justify-between items-center">
@@ -341,7 +393,7 @@ export default function App() {
                         {residents.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                       </select>
                     )}
-                    <button type="submit" className="bg-blue-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl ml-auto">LANÇAR</button>
+                    <button type="submit" className="bg-blue-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl ml-auto hover:bg-blue-700 active:scale-95 transition-all">LANÇAR CONTA</button>
                   </div>
                 </form>
               </section>
@@ -386,7 +438,7 @@ export default function App() {
                     <div key={bill.id} className="p-5 rounded-3xl border border-slate-100 group relative hover:border-blue-200 transition-all">
                       <div className="flex justify-between items-start mb-3">
                         <p className="text-sm font-black text-slate-800">{bill.description}</p>
-                        {isAdmin && <button onClick={() => deleteDoc(doc(db, 'artifacts', APTO_ID, 'public', 'data', 'bills', bill.id))} className="text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>}
+                        {isAdmin && <button onClick={() => deleteDoc(doc(db, 'artifacts', APTO_ID, 'public', 'data', 'bills', bill.id))} className="text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>}
                       </div>
                       <div className={`flex items-center gap-2 p-2 rounded-xl text-[10px] font-black uppercase ${surplus >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
                         {surplus >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
@@ -398,6 +450,23 @@ export default function App() {
                 })}
               </div>
             </section>
+
+            {/* Caixinha Form (Apenas Admin) */}
+            {isAdmin && viewMode === 'admin' && (
+              <section className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100 animate-in">
+                <h2 className="text-lg font-black mb-8 text-amber-500 uppercase tracking-tight flex items-center gap-3"><PiggyBank size={24} /> Caixinha</h2>
+                <form onSubmit={handleAddCaixinha} className="space-y-5">
+                  <input type="text" placeholder="Motivo..." className="w-full p-4 bg-slate-50 rounded-2xl font-bold outline-none" value={newCaixinha.description} onChange={e => setNewCaixinha({...newCaixinha, description: e.target.value})} />
+                  <div className="flex gap-3">
+                    <input type="number" placeholder="R$" className="w-2/3 p-4 bg-slate-50 rounded-2xl font-black outline-none" value={newCaixinha.value} onChange={e => setNewCaixinha({...newCaixinha, value: e.target.value})} />
+                    <select className="w-1/3 p-4 bg-slate-100 rounded-2xl font-black text-[10px] outline-none" value={newCaixinha.type} onChange={e => setNewCaixinha({...newCaixinha, type: e.target.value as any})}>
+                      <option value="credit">ENTRADA</option><option value="debit">SAÍDA</option>
+                    </select>
+                  </div>
+                  <button type="submit" className="w-full bg-amber-500 text-white p-4 rounded-2xl font-black shadow-xl hover:bg-amber-600 transition-all">REGISTRAR</button>
+                </form>
+              </section>
+            )}
           </div>
         </div>
       </div>
