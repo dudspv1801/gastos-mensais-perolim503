@@ -11,10 +11,17 @@ import {
   LogOut,
   ShieldCheck,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpRight,
+  ArrowDownRight,
+  ShoppingCart,
+  Car,
+  Clock
 } from 'lucide-react';
 
-// Importações do Firebase
+// Firebase Imports
 import { initializeApp, getApps } from 'firebase/app';
 import { 
   getFirestore, 
@@ -23,7 +30,8 @@ import {
   addDoc, 
   deleteDoc, 
   doc, 
-  updateDoc
+  updateDoc,
+  setDoc
 } from 'firebase/firestore';
 import { 
   getAuth, 
@@ -34,434 +42,388 @@ import {
   User
 } from 'firebase/auth';
 
-// --- Interfaces de Tipagem ---
+// --- Interfaces ---
+type BillType = 'rent' | 'shared' | 'parking' | 'individual' | 'house_supplies';
+
 interface Resident {
   id: string;
   name: string;
   index: number;
+  rentWeight: number;
 }
 
 interface Bill {
   id: string;
   description: string;
-  value: number;
+  budgetedValue: number; // Valor cobrado
+  actualValue: number;   // Valor real pago
   createdAt: number;
+  type: BillType;
+  monthId: string;
+  isPaid: boolean;
+  paidAt?: number;
+  targetResidentId?: string;
 }
 
-interface CaixinhaTransaction {
-  id: string;
-  description: string;
-  value: number;
-  type: 'credit' | 'debit';
-  createdAt: number;
+interface ReceiptStatus {
+  id: string; 
+  residentId: string;
+  monthId: string;
+  received: boolean;
+  receivedAt?: number;
 }
 
 interface StatCardProps {
   title: string;
   value: number;
   icon: React.ReactElement;
-  color: 'blue' | 'emerald' | 'amber' | 'red';
+  color: 'blue' | 'emerald' | 'amber' | 'red' | 'indigo';
   subtitle?: string;
 }
 
-// --- Inicialização Segura do Firebase ---
-declare global {
-  interface Window {
-    __firebase_config?: string;
-    __app_id?: string;
-  }
-}
-
-const getFirebaseConfig = () => {
-  // 1. Tenta obter a configuração injetada (se houver)
-  if (typeof window !== 'undefined' && window.__firebase_config) {
-    try {
-      return JSON.parse(window.__firebase_config);
-    } catch (e) {
-      console.error("Erro ao processar __firebase_config");
-    }
-  }
-  
-  // 2. Configuração oficial do projeto do Eduardo
-  return {
-    apiKey: "AIzaSyBJDYaUNTJjkW46FV0kBaameQyJ1JHr6u8",
-    authDomain: "gestor-de-contas-b546e.firebaseapp.com",
-    projectId: "gestor-de-contas-b546e",
-    storageBucket: "gestor-de-contas-b546e.firebasestorage.app",
-    messagingSenderId: "980131809506",
-    appId: "1:980131809506:web:7ef3e90c1853bdf12d36bb"
-  };
+// --- Firebase Config & Init ---
+const firebaseConfig = {
+  apiKey: "AIzaSyBJDYaUNTJjkW46FV0kBaameQyJ1JHr6u8",
+  authDomain: "gestor-de-contas-b546e.firebaseapp.com",
+  projectId: "gestor-de-contas-b546e",
+  storageBucket: "gestor-de-contas-b546e.firebasestorage.app",
+  messagingSenderId: "980131809506",
+  appId: "1:980131809506:web:7ef3e90c1853bdf12d36bb"
 };
 
-const config = getFirebaseConfig();
-const isFirebaseConfigValid = !!(config && config.apiKey && config.projectId);
-
-let app: any, auth: any, db: any;
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const auth = getAuth(app);
+const db = getFirestore(app);
 const provider = new GoogleAuthProvider();
-provider.setCustomParameters({ prompt: 'select_account' });
+const APTO_ID = 'apartamento-final-v1';
+const ADMIN_EMAIL = "edduducamargos@gmail.com";
 
-if (isFirebaseConfigValid) {
-  app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
-  auth = getAuth(app);
-  db = getFirestore(app);
-}
-
-// ID do App para organização no Firestore
-const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'apartamento-producao-v1';
-
-// ==========================================================================
-// CONFIGURAÇÃO DE ADMIN (EDUARDO)
-// ==========================================================================
-const ADMIN_EMAIL = "edduducamargos@gmail.com"; 
-
-const App: React.FC = () => {
+export default function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [viewMode, setViewMode] = useState<'public' | 'admin'>('public');
-  const [residents, setResidents] = useState<Resident[]>([]);
-  const [bills, setBills] = useState<Bill[]>([]);
-  const [caixinhaTransactions, setCaixinhaTransactions] = useState<CaixinhaTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<'public' | 'admin'>('public');
   
-  const [newBill, setNewBill] = useState({ description: '', value: '' });
-  const [newCaixinha, setNewCaixinha] = useState({ description: '', value: '', type: 'credit' as 'credit' | 'debit' });
+  const [residents, setResidents] = useState<Resident[]>([]);
+  const [allBills, setAllBills] = useState<Bill[]>([]);
+  const [receipts, setReceipts] = useState<ReceiptStatus[]>([]);
+  
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const currentMonthId = useMemo(() => {
+    return `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}`;
+  }, [selectedDate]);
 
-  // Verifica se o utilizador logado é o Eduardo
+  const [newBill, setNewBill] = useState({ 
+    description: '', budgetedValue: '', actualValue: '', type: 'shared' as BillType, targetId: 'all'
+  });
+
   const isAdmin = useMemo(() => user?.email === ADMIN_EMAIL, [user]);
 
-  // Bloqueio de segurança se a config estiver vazia
-  if (!isFirebaseConfigValid) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-slate-50 p-6 text-center">
-        <div className="max-w-md bg-white p-10 rounded-[2.5rem] shadow-xl border border-red-100 font-sans">
-          <AlertTriangle className="mx-auto text-red-500 mb-4" size={48} />
-          <h1 className="text-xl font-black mb-2 text-slate-900">Configuração em Falta</h1>
-          <p className="text-slate-500 text-sm">Verifica as credenciais do Firebase no ficheiro App.tsx.</p>
-        </div>
-      </div>
-    );
-  }
-
-  // 1. Ouvinte de Autenticação
+  // 1. Auth Logic
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
-      if (u?.email === ADMIN_EMAIL) {
-        setViewMode('admin');
-      } else {
-        setViewMode('public');
-      }
+      if (u?.email === ADMIN_EMAIL) setViewMode('admin');
+      else setViewMode('public');
       setLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // 2. Sincronização de Dados (Tempo Real)
+  // 2. Data Sync
   useEffect(() => {
     if (!user) return;
+    const billsRef = collection(db, 'artifacts', APTO_ID, 'public', 'data', 'bills');
+    const residentsRef = collection(db, 'artifacts', APTO_ID, 'public', 'data', 'residents');
+    const receiptsRef = collection(db, 'artifacts', APTO_ID, 'public', 'data', 'receipts');
 
-    // Caminhos seguindo a regra de estrutura estrita
-    const billsCol = collection(db, 'artifacts', appId, 'public', 'data', 'bills');
-    const residentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'residents');
-    const caixinhaCol = collection(db, 'artifacts', appId, 'public', 'data', 'caixinha');
-
-    const unsubBills = onSnapshot(billsCol, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Bill));
-      setBills(data.sort((a, b) => b.createdAt - a.createdAt));
+    const unsubBills = onSnapshot(billsRef, (s) => {
+      const data = s.docs.map(d => ({ ...d.data(), id: d.id } as Bill));
+      setAllBills(data.sort((a, b) => b.createdAt - a.createdAt));
     });
 
-    const unsubResidents = onSnapshot(residentsCol, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Resident));
-      if (data.length === 0 && isAdmin) {
-        initializeResidents();
-      } else {
-        setResidents(data.sort((a, b) => a.index - b.index));
-      }
+    const unsubResidents = onSnapshot(residentsRef, (s) => {
+      const data = s.docs.map(d => ({ ...d.data(), id: d.id } as Resident));
+      if (data.length === 0 && isAdmin) setupDefaultResidents();
+      else setResidents(data.sort((a, b) => a.index - b.index));
     });
 
-    const unsubCaixinha = onSnapshot(caixinhaCol, (snapshot) => {
-      setCaixinhaTransactions(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CaixinhaTransaction)));
-    });
+    const unsubReceipts = onSnapshot(receiptsRef, (s) => 
+      setReceipts(s.docs.map(d => ({ ...d.data(), id: d.id } as ReceiptStatus)))
+    );
 
-    return () => {
-      unsubBills();
-      unsubResidents();
-      unsubCaixinha();
-    };
+    return () => { unsubBills(); unsubResidents(); unsubReceipts(); };
   }, [user, isAdmin]);
 
-  const login = async () => {
-    try { await signInWithPopup(auth, provider); } catch (e) { console.error("Erro login:", e); }
-  };
-
-  const logout = () => signOut(auth);
-
-  const initializeResidents = async () => {
-    const residentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'residents');
-    const defaults = ["Eduardo", "Menon", "Lucas", "Camila", "Júlia", "Saulo"];
+  const setupDefaultResidents = async () => {
+    const residentsRef = collection(db, 'artifacts', APTO_ID, 'public', 'data', 'residents');
+    const defaults = [
+      { name: "Eduardo", weight: 1.0 }, { name: "Menon", weight: 1.0 }, { name: "Lucas", weight: 1.0 },
+      { name: "Camila", weight: 0.65 }, { name: "Júlia", weight: 0.65 }, { name: "Saulo", weight: 0.60 }
+    ];
     for (let i = 0; i < defaults.length; i++) {
-      await addDoc(residentsCol, { name: defaults[i], index: i + 1 });
+      await addDoc(residentsRef, { name: defaults[i].name, rentWeight: defaults[i].weight, index: i });
     }
   };
 
-  // --- Cálculos Matemáticos ---
-  const totalBills = useMemo(() => bills.reduce((acc, b) => acc + Number(b.value), 0), [bills]);
-  const perPerson = useMemo(() => residents.length > 0 ? totalBills / residents.length : 0, [totalBills, residents]);
+  // Filtragem e Cálculos
+  const bills = useMemo(() => allBills.filter(b => b.monthId === currentMonthId), [allBills, currentMonthId]);
+
   const caixinhaBalance = useMemo(() => {
-    return caixinhaTransactions.reduce((acc, t) => t.type === 'credit' ? acc + Number(t.value) : acc - Number(t.value), 0);
-  }, [caixinhaTransactions]);
+    return allBills.reduce((acc, b) => acc + (Number(b.budgetedValue) - Number(b.actualValue)), 0);
+  }, [allBills]);
 
-  // --- Ações do Utilizador ---
-  const addBill = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdmin || !newBill.description || !newBill.value) return;
-    try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'bills'), {
-        description: newBill.description,
-        value: Number(newBill.value),
-        createdAt: Date.now()
-      });
-      setNewBill({ description: '', value: '' });
-    } catch (err) {
-      alert("Erro ao guardar: Verifica as permissões no Firebase!");
-    }
-  };
+  const totals = useMemo(() => {
+    const totalWeight = residents.reduce((acc, r) => acc + (Number(r.rentWeight) || 0), 0);
+    
+    const getSum = (type: BillType) => bills.filter(b => b.type === type).reduce((acc, b) => acc + Number(b.budgetedValue), 0);
+    const getActualSum = (type: BillType) => bills.filter(b => b.type === type).reduce((acc, b) => acc + Number(b.actualValue), 0);
 
-  const addCaixinhaAction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isAdmin || !newCaixinha.description || !newCaixinha.value) return;
-    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'caixinha'), {
-      description: newCaixinha.description,
-      value: Number(newCaixinha.value),
-      type: newCaixinha.type,
-      createdAt: Date.now()
+    const totalRent = getSum('rent');
+    const totalShared = getSum('shared');
+    const totalParking = getSum('parking');
+    const totalHouseSupplies = getSum('house_supplies'); // O valor que todos vão pagar (budgeted)
+    const realHouseSupplies = getActualSum('house_supplies'); // O valor que o Menon realmente gastou
+
+    const rentPerWeight = totalWeight > 0 ? totalRent / totalWeight : 0;
+    const sharedPerPerson = residents.length > 0 ? (totalShared + totalHouseSupplies) / residents.length : 0;
+
+    const breakdown = residents.map(res => {
+      let totalToPay = 0;
+      const rShare = (Number(res.rentWeight) || 0) * rentPerWeight;
+      totalToPay += rShare + sharedPerPerson;
+      if (res.name === 'Eduardo') totalToPay += totalParking;
+      
+      const extras = bills.filter(b => b.type === 'individual' && b.targetResidentId === res.id).reduce((acc, b) => acc + Number(b.budgetedValue), 0);
+      totalToPay += extras;
+
+      let credit = 0;
+      if (res.name === 'Menon') {
+        credit = realHouseSupplies;
+        totalToPay -= credit;
+      }
+
+      const receipt = receipts.find(rec => rec.residentId === res.id && rec.monthId === currentMonthId);
+
+      return {
+        ...res,
+        rentShare: rShare,
+        sharedShare: sharedPerPerson,
+        credit,
+        total: totalToPay,
+        isReceived: receipt?.received || false,
+        receivedAt: receipt?.receivedAt
+      };
     });
-    setNewCaixinha({ description: '', value: '', type: 'credit' });
+
+    return {
+      breakdown,
+      totalCharged: totalRent + totalShared + totalParking + totalHouseSupplies + bills.filter(b => b.type === 'individual').reduce((acc, b) => acc + Number(b.budgetedValue), 0)
+    };
+  }, [residents, bills, receipts, currentMonthId]);
+
+  // Handlers
+  const handleAddBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAdmin || !newBill.description || !newBill.budgetedValue) return;
+    await addDoc(collection(db, 'artifacts', APTO_ID, 'public', 'data', 'bills'), {
+      description: newBill.description,
+      budgetedValue: parseFloat(newBill.budgetedValue),
+      actualValue: parseFloat(newBill.actualValue || newBill.budgetedValue),
+      type: newBill.type,
+      monthId: currentMonthId,
+      isPaid: false,
+      createdAt: Date.now(),
+      targetResidentId: newBill.type === 'individual' ? newBill.targetId : null
+    });
+    setNewBill({ description: '', budgetedValue: '', actualValue: '', type: 'shared', targetId: 'all' });
   };
 
-  const removeBill = async (id: string) => {
+  const toggleReceiptStatus = async (res: any) => {
     if (!isAdmin) return;
-    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'bills', id));
+    const receiptId = `${res.id}_${currentMonthId}`;
+    await setDoc(doc(db, 'artifacts', APTO_ID, 'public', 'data', 'receipts', receiptId), {
+      residentId: res.id, monthId: currentMonthId, received: !res.isReceived, receivedAt: !res.isReceived ? Date.now() : null
+    }, { merge: true });
   };
 
-  const updateResidentName = async (id: string, newName: string) => {
-    if (!isAdmin) return;
-    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'residents', id), { name: newName });
-  };
-
-  const copyToClipboard = () => {
-    const text = `📊 RESUMO APARTAMENTO\nTotal: R$ ${totalBills.toFixed(2)}\nRateio: R$ ${perPerson.toFixed(2)}\nCaixinha: R$ ${caixinhaBalance.toFixed(2)}`;
+  const copySummary = () => {
+    let text = `📊 *RESUMO APTO - ${selectedDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase()}*\n\n`;
+    text += `📝 *CONTAS DO MÊS:*\n`;
+    bills.forEach(b => text += `- ${b.description}: R$ ${b.budgetedValue.toFixed(2)}\n`);
+    text += `\n👥 *TOTAL POR MORADOR:*\n`;
+    totals.breakdown.forEach(r => text += `*${r.name.toUpperCase()}*: R$ ${r.total.toFixed(2)} ${r.isReceived ? '✅' : '⏳'}\n`);
+    text += `\n💰 *TOTAL:* R$ ${totals.totalCharged.toFixed(2)}\n🐷 *CAIXINHA:* R$ ${caixinhaBalance.toFixed(2)}`;
+    
     const textArea = document.createElement("textarea");
-    textArea.value = text;
-    document.body.appendChild(textArea);
-    textArea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textArea);
-    alert("Resumo copiado para o WhatsApp!");
+    textArea.value = text; document.body.appendChild(textArea); textArea.select();
+    document.execCommand('copy'); document.body.removeChild(textArea);
+    alert("Resumo copiado!");
   };
 
-  if (loading && isFirebaseConfigValid) return (
-    <div className="h-screen flex items-center justify-center bg-slate-50">
-      <div className="flex flex-col items-center gap-4">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">A carregar dados...</p>
-      </div>
-    </div>
-  );
+  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-20">
-      <div className="max-w-6xl mx-auto p-4 md:p-8">
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-10">
+      <div className="max-w-7xl mx-auto p-4 md:p-8">
         
-        {/* Cabeçalho de Navegação */}
-        <header className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
-          <div className="flex items-center gap-5">
-            <div className="p-4 bg-slate-900 text-white rounded-3xl">
-              <Users size={32} />
-            </div>
+        {/* Header & Nav */}
+        <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
+          <div className="flex items-center gap-4">
+            <div className="p-4 bg-slate-900 text-white rounded-3xl"><Users size={32} /></div>
             <div>
-              <h1 className="text-2xl font-black text-slate-900 leading-none tracking-tight">Gestão do Apê</h1>
-              <div className="flex items-center gap-2 mt-2">
-                <span className={`w-2 h-2 rounded-full ${isAdmin ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500'}`}></span>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  {isAdmin ? "Administrador (Eduardo)" : "Modo Visualização"}
-                </p>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Gestão Perolim 503</h1>
+              <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-xl mt-2 border border-slate-100">
+                <button onClick={() => setSelectedDate(new Date(selectedDate.setMonth(selectedDate.getMonth() - 1)))} className="p-1 hover:bg-white rounded-md transition-colors"><ChevronLeft size={16}/></button>
+                <span className="text-[10px] font-black uppercase text-slate-500 w-24 text-center">{selectedDate.toLocaleString('pt-BR', { month: 'short', year: 'numeric' })}</span>
+                <button onClick={() => setSelectedDate(new Date(selectedDate.setMonth(selectedDate.getMonth() + 1)))} className="p-1 hover:bg-white rounded-md transition-colors"><ChevronRight size={16}/></button>
               </div>
             </div>
           </div>
 
-          {!user ? (
-            <button onClick={login} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 flex items-center gap-3 active:scale-95 transition-all">
-              <LogIn size={20} /> Entrar com Google
-            </button>
-          ) : (
-            <div className="flex items-center gap-4">
-              {isAdmin && (
-                <nav className="flex bg-slate-100 p-1.5 rounded-2xl">
-                  <button onClick={() => setViewMode('public')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${viewMode === 'public' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Público</button>
-                  <button onClick={() => setViewMode('admin')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${viewMode === 'admin' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Gestão</button>
-                </nav>
-              )}
-              <div className="flex items-center gap-3 border-l pl-4 border-slate-100 text-right">
-                <div>
-                  <p className="text-[10px] font-black text-slate-900 truncate max-w-[150px]">{user.displayName || user.email}</p>
-                  <button onClick={logout} className="text-[9px] font-black text-red-500 uppercase hover:underline">Sair</button>
-                </div>
-                {user.photoURL && <img src={user.photoURL} alt="Avatar" className="w-10 h-10 rounded-2xl border-2 border-white shadow-md" />}
+          <div className="flex items-center gap-3">
+            {!user ? (
+              <button onClick={() => signInWithPopup(auth, provider)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-black flex items-center gap-2 shadow-lg shadow-blue-100"><LogIn size={20} /> Login Admin</button>
+            ) : (
+              <div className="flex items-center gap-4">
+                {isAdmin && (
+                  <nav className="flex bg-slate-100 p-1 rounded-xl">
+                    <button onClick={() => setViewMode('public')} className={`px-5 py-2 rounded-lg text-xs font-black transition-all ${viewMode === 'public' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400'}`}>Ver</button>
+                    <button onClick={() => setViewMode('admin')} className={`px-5 py-2 rounded-lg text-xs font-black transition-all ${viewMode === 'admin' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-400'}`}>Gestão</button>
+                  </nav>
+                )}
+                <button onClick={() => signOut(auth)} className="text-[10px] font-black text-red-500 uppercase">Sair</button>
+                {user.photoURL && <img src={user.photoURL} className="w-10 h-10 rounded-2xl border-2 border-white shadow-sm" />}
               </div>
-            </div>
-          )}
+            )}
+            <button onClick={copySummary} className="bg-slate-900 text-white p-3.5 rounded-2xl shadow-xl active:scale-95 transition-all"><Download size={20} /></button>
+          </div>
         </header>
 
-        {/* Dashboard de Resumo */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <StatCard title="Despesa Total" value={totalBills} icon={<Receipt />} color="blue" />
-          <StatCard title="Rateio Individual" value={perPerson} icon={<DollarSign />} color="emerald" subtitle={`(${residents.length} pessoas)`} />
-          <StatCard title="Saldo Caixinha" value={caixinhaBalance} icon={<PiggyBank />} color={caixinhaBalance < 0 ? "red" : "amber"} />
+        {/* Dashboard */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+          <StatCard title="Cobrado no Mês" value={totals.totalCharged} icon={<Receipt />} color="indigo" />
+          <StatCard title="Pendente Receber" value={totals.breakdown.reduce((acc, r) => acc + (!r.isReceived ? r.total : 0), 0)} icon={<Clock />} color="blue" />
+          <StatCard title="Saldo Excedente" value={caixinhaBalance} icon={<PiggyBank />} color={caixinhaBalance < 0 ? "red" : "amber"} subtitle="Acumulado Caixinha" />
+          <StatCard title="Crédito Menon" value={totals.breakdown.find(r => r.name === 'Menon')?.credit || 0} icon={<ShoppingCart />} color="emerald" subtitle="Reembolso Compras" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-10">
             
-            {/* Lançamento de Despesa (Apenas Admin) */}
+            {/* Lançamento Form (Só Admin) */}
             {isAdmin && viewMode === 'admin' && (
-              <section className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 animate-in fade-in zoom-in duration-500">
-                <h2 className="text-xl font-black mb-8 flex items-center gap-3 text-slate-800">
-                  <PlusCircle className="text-blue-600" size={24} /> Novo Gasto
-                </h2>
-                <form onSubmit={addBill} className="flex flex-col md:flex-row gap-5">
-                  <input type="text" placeholder="Ex: Internet, Romilda..." className="flex-1 p-5 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-4 focus:ring-blue-100 transition-all" value={newBill.description} onChange={e => setNewBill({...newBill, description: e.target.value})} />
-                  <div className="relative">
-                    <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
-                    <input type="number" placeholder="0,00" className="w-full md:w-44 p-5 pl-12 bg-slate-50 border-none rounded-2xl font-black outline-none focus:ring-4 focus:ring-blue-100 transition-all" value={newBill.value} onChange={e => setNewBill({...newBill, value: e.target.value})} />
+              <section className="bg-white p-8 md:p-10 rounded-[3rem] shadow-sm border border-slate-100">
+                <h2 className="text-xl font-black mb-8 flex items-center gap-3 text-slate-800"><PlusCircle className="text-blue-600" /> Novo Gasto</h2>
+                <form onSubmit={handleAddBill} className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input className="p-4 bg-slate-50 border-none rounded-2xl font-bold outline-none" placeholder="Descrição (Ex: Romilda)" value={newBill.description} onChange={e => setNewBill({...newBill, description: e.target.value})} />
+                    <select className="p-4 bg-slate-100 border-none rounded-2xl font-black text-xs" value={newBill.type} onChange={e => setNewBill({...newBill, type: e.target.value as BillType})}>
+                      <option value="shared">Dividido por 6</option>
+                      <option value="rent">Aluguel (Proporcional)</option>
+                      <option value="house_supplies">Compras Casa (Reembolso Menon)</option>
+                      <option value="parking">Só Eduardo (Garagem)</option>
+                      <option value="individual">Extra Individual</option>
+                    </select>
                   </div>
-                  <button type="submit" className="bg-blue-600 text-white px-10 py-5 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 transition-all active:scale-95">LANÇAR</button>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-black text-slate-400 ml-4 uppercase">Valor Cobrado (Rateio)</label>
+                       <input type="number" step="0.01" className="w-full p-4 bg-blue-50 text-blue-700 border-none rounded-2xl font-black outline-none" placeholder="R$ 0,00" value={newBill.budgetedValue} onChange={e => setNewBill({...newBill, budgetedValue: e.target.value})} />
+                    </div>
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-black text-slate-400 ml-4 uppercase">Valor Pago (Real)</label>
+                       <input type="number" step="0.01" className="w-full p-4 bg-emerald-50 text-emerald-700 border-none rounded-2xl font-black outline-none" placeholder="R$ 0,00" value={newBill.actualValue} onChange={e => setNewBill({...newBill, actualValue: e.target.value})} />
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    {newBill.type === 'individual' && (
+                      <select className="p-4 bg-blue-50 text-blue-700 rounded-2xl font-bold text-xs" value={newBill.targetId} onChange={e => setNewBill({...newBill, targetId: e.target.value})}>
+                        <option value="all">Escolha o morador...</option>
+                        {residents.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                      </select>
+                    )}
+                    <button type="submit" className="bg-blue-600 text-white px-10 py-4 rounded-2xl font-black shadow-xl ml-auto">LANÇAR</button>
+                  </div>
                 </form>
               </section>
             )}
 
-            {/* Listagem de Despesas */}
+            {/* Tabela de Recebimento */}
             <section className="bg-white rounded-[3rem] shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-10 border-b border-slate-50 flex justify-between items-center bg-slate-50/20 text-slate-800">
-                <h2 className="text-xl font-black uppercase tracking-tight">Registo de Contas</h2>
-                <button onClick={copyToClipboard} className="bg-white p-4 rounded-2xl shadow-sm text-slate-400 hover:text-blue-600 transition-all active:scale-90">
-                  <Download size={22} />
-                </button>
-              </div>
+              <div className="p-8 border-b border-slate-50 bg-slate-50/20 text-slate-800 font-black uppercase text-xs tracking-widest">Controle de Pagamentos</div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
-                  <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest">
-                    <tr>
-                      <th className="px-10 py-6">Descrição</th>
-                      <th className="px-10 py-6">Valor Rateio</th>
-                      {isAdmin && viewMode === 'admin' && <th className="px-10 py-6 text-right">Acção</th>}
-                    </tr>
+                  <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black">
+                    <tr><th className="px-8 py-5">Morador</th><th className="px-8 py-5">Aluguel</th><th className="px-8 py-5">Devido</th><th className="px-8 py-5 text-right">Pix</th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {bills.length === 0 ? (
-                      <tr><td colSpan={3} className="px-10 py-20 text-center text-slate-300 italic font-medium">Sem gastos registados para este mês.</td></tr>
-                    ) : (
-                      bills.map(bill => (
-                        <tr key={bill.id} className="hover:bg-blue-50/20 transition-colors group">
-                          <td className="px-10 py-6">
-                            <p className="font-black text-slate-700 text-lg">{bill.description}</p>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Em {new Date(bill.createdAt).toLocaleDateString()}</p>
-                          </td>
-                          <td className="px-10 py-6 font-mono font-black text-slate-900 text-xl">R$ {Number(bill.value).toFixed(2)}</td>
-                          {isAdmin && viewMode === 'admin' && (
-                            <td className="px-10 py-6 text-right">
-                              <button onClick={() => removeBill(bill.id)} className="bg-red-50 text-red-400 p-3 rounded-xl hover:text-red-600 transition-all opacity-0 group-hover:opacity-100 active:scale-90">
-                                <Trash2 size={20} />
-                              </button>
-                            </td>
-                          )}
-                        </tr>
-                      ))
-                    )}
+                    {totals.breakdown.map(res => (
+                      <tr key={res.id} className={`${res.isReceived ? 'bg-emerald-50/30' : 'hover:bg-slate-50/50'}`}>
+                        <td className="px-8 py-6 font-black text-slate-700">{res.name}</td>
+                        <td className="px-8 py-6 font-mono text-xs font-bold text-slate-400">R$ {res.rentShare.toFixed(2)}</td>
+                        <td className="px-8 py-6 font-mono font-black text-lg">R$ {res.total.toFixed(2)}</td>
+                        <td className="px-8 py-6 text-right">
+                          <button onClick={() => toggleReceiptStatus(res)} className={`px-6 py-2 rounded-xl text-[10px] font-black uppercase transition-all ${res.isReceived ? 'bg-red-50 text-red-500' : 'bg-emerald-500 text-white'}`}>
+                            {res.isReceived ? 'Desfazer' : 'Recebi'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             </section>
           </div>
 
-          {/* Barra Lateral (Moradores e Caixinha) */}
+          {/* Sidebar */}
           <div className="space-y-10">
-            {/* Secção de Moradores */}
-            <section className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100">
-              <h2 className="text-xl font-black mb-8 text-slate-800 uppercase tracking-tight flex items-center gap-3">
-                <Users size={24} className="text-blue-600" /> Moradores
-              </h2>
-              <div className="space-y-4">
-                {residents.map(res => (
-                  <div key={res.id} className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-transparent hover:border-blue-100 transition-all group">
-                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-xs font-black text-blue-600 shadow-sm border border-slate-100 group-hover:bg-blue-600 group-hover:text-white transition-all">
-                      {res.index}
+            {/* Histórico e Excedentes */}
+            <section className="bg-white p-8 rounded-[3rem] shadow-sm border border-slate-100">
+              <h2 className="text-lg font-black mb-8 flex items-center gap-2 text-slate-800 uppercase tracking-tight"><Receipt size={20} className="text-blue-600" /> Contas & Sobras</h2>
+              <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                {bills.map(bill => {
+                  const surplus = bill.budgetedValue - bill.actualValue;
+                  return (
+                    <div key={bill.id} className="p-5 rounded-3xl border border-slate-100 group relative hover:border-blue-200 transition-all">
+                      <div className="flex justify-between items-start mb-3">
+                        <p className="text-sm font-black text-slate-800">{bill.description}</p>
+                        {isAdmin && <button onClick={() => deleteDoc(doc(db, 'artifacts', APTO_ID, 'public', 'data', 'bills', bill.id))} className="text-red-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><Trash2 size={14} /></button>}
+                      </div>
+                      <div className={`flex items-center gap-2 p-2 rounded-xl text-[10px] font-black uppercase ${surplus >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                        {surplus >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                        {surplus >= 0 ? `Sobrou R$ ${surplus.toFixed(2)}` : `Faltou R$ ${Math.abs(surplus).toFixed(2)}`}
+                      </div>
+                      <p className="text-[9px] font-bold text-slate-400 mt-2 text-right">Cobrado: R$ {bill.budgetedValue.toFixed(2)}</p>
                     </div>
-                    {isAdmin && viewMode === 'admin' ? (
-                      <input 
-                        type="text" 
-                        value={res.name} 
-                        onChange={(e) => updateResidentName(res.id, e.target.value)} 
-                        className="flex-1 bg-transparent font-black text-slate-700 outline-none focus:text-blue-600 text-lg"
-                      />
-                    ) : (
-                      <span className="font-black text-slate-700 text-lg">{res.name}</span>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
-
-            {/* Gestão da Caixinha (Apenas Admin) */}
-            {isAdmin && viewMode === 'admin' && (
-              <section className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 animate-in slide-in-from-bottom-6 duration-700">
-                <h2 className="text-xl font-black mb-8 text-amber-500 uppercase tracking-tight flex items-center gap-3">
-                  <PiggyBank size={24} /> Gestão Caixinha
-                </h2>
-                <form onSubmit={addCaixinhaAction} className="space-y-5">
-                  <input type="text" placeholder="Motivo..." className="w-full p-5 bg-slate-50 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-amber-50 transition-all" value={newCaixinha.description} onChange={e => setNewCaixinha({...newCaixinha, description: e.target.value})} />
-                  <div className="flex gap-3">
-                    <input type="number" placeholder="Valor" className="w-2/3 p-5 bg-slate-50 rounded-2xl font-black outline-none focus:ring-4 focus:ring-amber-50 transition-all" value={newCaixinha.value} onChange={e => setNewCaixinha({...newCaixinha, value: e.target.value})} />
-                    <select className="w-1/3 p-4 bg-slate-100 rounded-2xl font-black text-[10px] outline-none cursor-pointer" value={newCaixinha.type} onChange={e => setNewCaixinha({...newCaixinha, type: e.target.value as any})}>
-                      <option value="credit">ENTRADA</option>
-                      <option value="debit">SAÍDA</option>
-                    </select>
-                  </div>
-                  <button type="submit" className="w-full bg-amber-500 text-white p-5 rounded-2xl font-black hover:bg-amber-600 transition-all shadow-xl shadow-amber-100 active:scale-95">REGISTAR</button>
-                </form>
-              </section>
-            )}
           </div>
         </div>
       </div>
     </div>
   );
-};
+}
 
-const StatCard: React.FC<StatCardProps> = ({ title, value, icon, color, subtitle }) => {
-  const colorMap = {
+function StatCard({ title, value, icon, color, subtitle }: StatCardProps) {
+  const colors = {
     blue: "bg-blue-50 text-blue-600",
     emerald: "bg-emerald-50 text-emerald-600",
     amber: "bg-amber-50 text-amber-600",
-    red: "bg-red-50 text-red-600"
+    red: "bg-red-50 text-red-600",
+    indigo: "bg-indigo-50 text-indigo-600"
   };
-
   return (
-    <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 hover:scale-[1.02] transition-all group">
-      <div className="flex items-center gap-6">
-        <div className={`p-5 rounded-3xl transition-transform group-hover:rotate-12 ${colorMap[color]}`}>
-          {React.cloneElement(icon as React.ReactElement<any>, { size: 32 })}
-        </div>
+    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 hover:scale-[1.02] transition-all group">
+      <div className="flex items-center gap-5">
+        <div className={`p-4 rounded-2xl transition-transform group-hover:rotate-6 ${colors[color]}`}>{React.cloneElement(icon as React.ReactElement<any>, { size: 28 })}</div>
         <div>
-          <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1.5 leading-none">
-            {title} {subtitle && <span className="lowercase font-bold opacity-60"> {subtitle}</span>}
-          </p>
-          <h3 className="text-3xl font-black text-slate-900 font-mono tracking-tighter leading-none">
-            R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-          </h3>
+          <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-none mb-2">{title}</p>
+          <h3 className="text-2xl font-black text-slate-900 font-mono">R$ {value.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</h3>
+          {subtitle && <p className="text-[9px] font-bold text-slate-400 mt-1">{subtitle}</p>}
         </div>
       </div>
     </div>
   );
-};
-
-export default App;
+}
