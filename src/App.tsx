@@ -64,7 +64,7 @@ interface StatCardProps {
   subtitle?: string;
 }
 
-// --- Inicialização do Firebase Segura ---
+// --- Inicialização Segura do Firebase ---
 declare global {
   interface Window {
     __firebase_config?: string;
@@ -73,7 +73,7 @@ declare global {
 }
 
 const getFirebaseConfig = () => {
-  // 1. Tenta pegar a configuração injetada pelo ambiente (se houver)
+  // 1. Tenta obter a configuração injetada (se houver)
   if (typeof window !== 'undefined' && window.__firebase_config) {
     try {
       return JSON.parse(window.__firebase_config);
@@ -82,22 +82,19 @@ const getFirebaseConfig = () => {
     }
   }
   
-  // 2. Eduardo, se o build estiver falhando por causa de variáveis de ambiente,
-  // você pode preencher os valores do seu projeto diretamente neste objeto abaixo.
+  // 2. Configuração oficial do projeto do Eduardo
   return {
-    apiKey: "", // Cole sua API Key aqui
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: ""
+    apiKey: "AIzaSyBJDYaUNTJjkW46FV0kBaameQyJ1JHr6u8",
+    authDomain: "gestor-de-contas-b546e.firebaseapp.com",
+    projectId: "gestor-de-contas-b546e",
+    storageBucket: "gestor-de-contas-b546e.firebasestorage.app",
+    messagingSenderId: "980131809506",
+    appId: "1:980131809506:web:7ef3e90c1853bdf12d36bb"
   };
 };
 
 const config = getFirebaseConfig();
-
-// Previne o crash se a configuração estiver vazia (Tela Branca)
-const isFirebaseConfigValid = config && config.apiKey && config.projectId;
+const isFirebaseConfigValid = !!(config && config.apiKey && config.projectId);
 
 let app: any, auth: any, db: any;
 const provider = new GoogleAuthProvider();
@@ -109,11 +106,13 @@ if (isFirebaseConfigValid) {
   db = getFirestore(app);
 }
 
+// ID do App para organização no Firestore
 const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'apartamento-producao-v1';
 
-// --- CONFIGURAÇÃO DE ACESSO ---
-// Eduardo, coloque o seu e-mail do Google aqui para ter acesso administrativo total
-const ADMIN_EMAIL = "seu-email@gmail.com"; 
+// ==========================================================================
+// CONFIGURAÇÃO DE ADMIN (EDUARDO)
+// ==========================================================================
+const ADMIN_EMAIL = "edduducamargos@gmail.com"; 
 
 const App: React.FC = () => {
   const [user, setUser] = useState<User | null>(null);
@@ -126,31 +125,23 @@ const App: React.FC = () => {
   const [newBill, setNewBill] = useState({ description: '', value: '' });
   const [newCaixinha, setNewCaixinha] = useState({ description: '', value: '', type: 'credit' as 'credit' | 'debit' });
 
+  // Verifica se o utilizador logado é o Eduardo
   const isAdmin = useMemo(() => user?.email === ADMIN_EMAIL, [user]);
 
-  // Se o Firebase não estiver configurado corretamente, exibe um aviso claro
+  // Bloqueio de segurança se a config estiver vazia
   if (!isFirebaseConfigValid) {
     return (
-      <div className="h-screen flex items-center justify-center bg-slate-50 p-6">
-        <div className="max-w-md w-full bg-white p-10 rounded-[2.5rem] shadow-xl text-center border border-red-100">
-          <div className="bg-red-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <AlertTriangle className="text-red-500" size={40} />
-          </div>
-          <h1 className="text-2xl font-black text-slate-900 mb-3">Configuração Necessária</h1>
-          <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-            As credenciais do Firebase não foram encontradas. Para o site funcionar em produção, você deve preencher as chaves no código ou nas variáveis de ambiente.
-          </p>
-          <div className="bg-slate-900 p-6 rounded-2xl text-left font-mono text-xs text-blue-300 overflow-auto border border-slate-800">
-            // Edite o arquivo gestor-apartamento.jsx <br/>
-            // Procure pela função getFirebaseConfig() <br/>
-            apiKey: "SUA_CHAVE_AQUI"
-          </div>
+      <div className="h-screen flex items-center justify-center bg-slate-50 p-6 text-center">
+        <div className="max-w-md bg-white p-10 rounded-[2.5rem] shadow-xl border border-red-100 font-sans">
+          <AlertTriangle className="mx-auto text-red-500 mb-4" size={48} />
+          <h1 className="text-xl font-black mb-2 text-slate-900">Configuração em Falta</h1>
+          <p className="text-slate-500 text-sm">Verifica as credenciais do Firebase no ficheiro App.tsx.</p>
         </div>
       </div>
     );
   }
 
-  // 1. Monitoramento de Autenticação
+  // 1. Ouvinte de Autenticação
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
@@ -164,10 +155,11 @@ const App: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
-  // 2. Sincronização de Dados em Tempo Real
+  // 2. Sincronização de Dados (Tempo Real)
   useEffect(() => {
     if (!user) return;
 
+    // Caminhos seguindo a regra de estrutura estrita
     const billsCol = collection(db, 'artifacts', appId, 'public', 'data', 'bills');
     const residentsCol = collection(db, 'artifacts', appId, 'public', 'data', 'residents');
     const caixinhaCol = collection(db, 'artifacts', appId, 'public', 'data', 'caixinha');
@@ -175,7 +167,7 @@ const App: React.FC = () => {
     const unsubBills = onSnapshot(billsCol, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Bill));
       setBills(data.sort((a, b) => b.createdAt - a.createdAt));
-    }, (err) => console.error("Erro nas contas:", err));
+    });
 
     const unsubResidents = onSnapshot(residentsCol, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Resident));
@@ -184,11 +176,11 @@ const App: React.FC = () => {
       } else {
         setResidents(data.sort((a, b) => a.index - b.index));
       }
-    }, (err) => console.error("Erro nos moradores:", err));
+    });
 
     const unsubCaixinha = onSnapshot(caixinhaCol, (snapshot) => {
       setCaixinhaTransactions(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as CaixinhaTransaction)));
-    }, (err) => console.error("Erro na caixinha:", err));
+    });
 
     return () => {
       unsubBills();
@@ -198,11 +190,7 @@ const App: React.FC = () => {
   }, [user, isAdmin]);
 
   const login = async () => {
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Erro no login:", error);
-    }
+    try { await signInWithPopup(auth, provider); } catch (e) { console.error("Erro login:", e); }
   };
 
   const logout = () => signOut(auth);
@@ -215,14 +203,14 @@ const App: React.FC = () => {
     }
   };
 
-  // --- Cálculos de Rateio ---
+  // --- Cálculos Matemáticos ---
   const totalBills = useMemo(() => bills.reduce((acc, b) => acc + Number(b.value), 0), [bills]);
   const perPerson = useMemo(() => residents.length > 0 ? totalBills / residents.length : 0, [totalBills, residents]);
   const caixinhaBalance = useMemo(() => {
     return caixinhaTransactions.reduce((acc, t) => t.type === 'credit' ? acc + Number(t.value) : acc - Number(t.value), 0);
   }, [caixinhaTransactions]);
 
-  // --- Funções Administrativas ---
+  // --- Ações do Utilizador ---
   const addBill = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isAdmin || !newBill.description || !newBill.value) return;
@@ -233,8 +221,8 @@ const App: React.FC = () => {
         createdAt: Date.now()
       });
       setNewBill({ description: '', value: '' });
-    } catch (e) {
-      alert("Permissão negada. Verifique as regras do Firebase.");
+    } catch (err) {
+      alert("Erro ao guardar: Verifica as permissões no Firebase!");
     }
   };
 
@@ -257,30 +245,25 @@ const App: React.FC = () => {
 
   const updateResidentName = async (id: string, newName: string) => {
     if (!isAdmin) return;
-    const residentRef = doc(db, 'artifacts', appId, 'public', 'data', 'residents', id);
-    await updateDoc(residentRef, { name: newName });
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'residents', id), { name: newName });
   };
 
   const copyToClipboard = () => {
-    const text = `📊 RESUMO APTO\nTotal: R$ ${totalBills.toFixed(2)}\nRateio: R$ ${perPerson.toFixed(2)}\nCaixinha: R$ ${caixinhaBalance.toFixed(2)}`;
+    const text = `📊 RESUMO APARTAMENTO\nTotal: R$ ${totalBills.toFixed(2)}\nRateio: R$ ${perPerson.toFixed(2)}\nCaixinha: R$ ${caixinhaBalance.toFixed(2)}`;
     const textArea = document.createElement("textarea");
     textArea.value = text;
     document.body.appendChild(textArea);
     textArea.select();
-    try {
-      document.execCommand('copy');
-      alert("Copiado para o WhatsApp!");
-    } catch (e) {
-      console.error("Erro ao copiar", e);
-    }
+    document.execCommand('copy');
     document.body.removeChild(textArea);
+    alert("Resumo copiado para o WhatsApp!");
   };
 
-  if (loading) return (
+  if (loading && isFirebaseConfigValid) return (
     <div className="h-screen flex items-center justify-center bg-slate-50">
       <div className="flex flex-col items-center gap-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Carregando dados...</p>
+        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">A carregar dados...</p>
       </div>
     </div>
   );
@@ -289,80 +272,78 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased pb-20">
       <div className="max-w-6xl mx-auto p-4 md:p-8">
         
-        {/* Barra Superior */}
+        {/* Cabeçalho de Navegação */}
         <header className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white p-6 rounded-[2.5rem] shadow-sm border border-slate-100">
           <div className="flex items-center gap-5">
             <div className="p-4 bg-slate-900 text-white rounded-3xl">
               <Users size={32} />
             </div>
             <div>
-              <h1 className="text-2xl font-black tracking-tight text-slate-900">Gestão do Apê</h1>
-              <div className="flex items-center gap-2 mt-1">
+              <h1 className="text-2xl font-black text-slate-900 leading-none tracking-tight">Gestão do Apê</h1>
+              <div className="flex items-center gap-2 mt-2">
                 <span className={`w-2 h-2 rounded-full ${isAdmin ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500'}`}></span>
                 <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  {isAdmin ? "Administrador logado" : "Modo Visualização"}
+                  {isAdmin ? "Administrador (Eduardo)" : "Modo Visualização"}
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            {!user ? (
-              <button onClick={login} className="flex items-center gap-3 bg-blue-600 text-white px-8 py-4 rounded-2xl font-black hover:bg-blue-700 transition-all shadow-xl shadow-blue-100 active:scale-95">
-                <LogIn size={20} /> Entrar com Google
-              </button>
-            ) : (
-              <div className="flex items-center gap-4">
-                {isAdmin && (
-                  <nav className="flex bg-slate-100 p-1.5 rounded-2xl">
-                    <button onClick={() => setViewMode('public')} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${viewMode === 'public' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Público</button>
-                    <button onClick={() => setViewMode('admin')} className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${viewMode === 'admin' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Gestão</button>
-                  </nav>
-                )}
-                <div className="flex items-center gap-3 pl-2 border-l border-slate-100">
-                   <div className="text-right">
-                     <p className="text-[10px] font-black text-slate-900 truncate max-w-[120px]">{user.displayName || user.email}</p>
-                     <button onClick={logout} className="text-[9px] font-black text-red-500 uppercase hover:text-red-600 transition-colors">Sair da Conta</button>
-                   </div>
-                   {user.photoURL && <img src={user.photoURL} alt="Foto" className="w-10 h-10 rounded-2xl border-2 border-white shadow-sm" />}
+          {!user ? (
+            <button onClick={login} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 flex items-center gap-3 active:scale-95 transition-all">
+              <LogIn size={20} /> Entrar com Google
+            </button>
+          ) : (
+            <div className="flex items-center gap-4">
+              {isAdmin && (
+                <nav className="flex bg-slate-100 p-1.5 rounded-2xl">
+                  <button onClick={() => setViewMode('public')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${viewMode === 'public' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Público</button>
+                  <button onClick={() => setViewMode('admin')} className={`px-6 py-2 rounded-xl text-xs font-black transition-all ${viewMode === 'admin' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500'}`}>Gestão</button>
+                </nav>
+              )}
+              <div className="flex items-center gap-3 border-l pl-4 border-slate-100 text-right">
+                <div>
+                  <p className="text-[10px] font-black text-slate-900 truncate max-w-[150px]">{user.displayName || user.email}</p>
+                  <button onClick={logout} className="text-[9px] font-black text-red-500 uppercase hover:underline">Sair</button>
                 </div>
+                {user.photoURL && <img src={user.photoURL} alt="Avatar" className="w-10 h-10 rounded-2xl border-2 border-white shadow-md" />}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </header>
 
-        {/* Dashboard de Status */}
+        {/* Dashboard de Resumo */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
           <StatCard title="Despesa Total" value={totalBills} icon={<Receipt />} color="blue" />
-          <StatCard title="Valor Individual" value={perPerson} icon={<DollarSign />} color="emerald" subtitle={`(${residents.length} pessoas)`} />
+          <StatCard title="Rateio Individual" value={perPerson} icon={<DollarSign />} color="emerald" subtitle={`(${residents.length} pessoas)`} />
           <StatCard title="Saldo Caixinha" value={caixinhaBalance} icon={<PiggyBank />} color={caixinhaBalance < 0 ? "red" : "amber"} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
           <div className="lg:col-span-2 space-y-10">
             
-            {/* Lançamento de Despesa (Exclusivo Admin) */}
+            {/* Lançamento de Despesa (Apenas Admin) */}
             {isAdmin && viewMode === 'admin' && (
               <section className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 animate-in fade-in zoom-in duration-500">
                 <h2 className="text-xl font-black mb-8 flex items-center gap-3 text-slate-800">
-                  <PlusCircle className="text-blue-600" size={24} /> Novo Lançamento
+                  <PlusCircle className="text-blue-600" size={24} /> Novo Gasto
                 </h2>
                 <form onSubmit={addBill} className="flex flex-col md:flex-row gap-5">
-                  <input type="text" placeholder="Descrição (Ex: Internet, Romilda...)" className="flex-1 p-5 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-4 focus:ring-blue-100 transition-all" value={newBill.description} onChange={e => setNewBill({...newBill, description: e.target.value})} />
+                  <input type="text" placeholder="Ex: Internet, Romilda..." className="flex-1 p-5 bg-slate-50 border-none rounded-2xl font-bold outline-none focus:ring-4 focus:ring-blue-100 transition-all" value={newBill.description} onChange={e => setNewBill({...newBill, description: e.target.value})} />
                   <div className="relative">
                     <span className="absolute left-5 top-1/2 -translate-y-1/2 font-black text-slate-400">R$</span>
                     <input type="number" placeholder="0,00" className="w-full md:w-44 p-5 pl-12 bg-slate-50 border-none rounded-2xl font-black outline-none focus:ring-4 focus:ring-blue-100 transition-all" value={newBill.value} onChange={e => setNewBill({...newBill, value: e.target.value})} />
                   </div>
-                  <button type="submit" className="bg-blue-600 text-white px-10 py-5 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 transition-all active:scale-95">ADICIONAR</button>
+                  <button type="submit" className="bg-blue-600 text-white px-10 py-5 rounded-2xl font-black hover:bg-blue-700 shadow-xl shadow-blue-100 transition-all active:scale-95">LANÇAR</button>
                 </form>
               </section>
             )}
 
             {/* Listagem de Despesas */}
             <section className="bg-white rounded-[3rem] shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-10 border-b border-slate-50 flex justify-between items-center bg-slate-50/20">
-                <h2 className="text-xl font-black text-slate-800 uppercase tracking-tight">Histórico de Gastos</h2>
-                <button onClick={copyToClipboard} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 text-slate-400 hover:text-blue-600 hover:border-blue-100 transition-all active:scale-90">
+              <div className="p-10 border-b border-slate-50 flex justify-between items-center bg-slate-50/20 text-slate-800">
+                <h2 className="text-xl font-black uppercase tracking-tight">Registo de Contas</h2>
+                <button onClick={copyToClipboard} className="bg-white p-4 rounded-2xl shadow-sm text-slate-400 hover:text-blue-600 transition-all active:scale-90">
                   <Download size={22} />
                 </button>
               </div>
@@ -370,25 +351,25 @@ const App: React.FC = () => {
                 <table className="w-full text-left">
                   <thead className="bg-slate-50 text-slate-400 text-[10px] uppercase font-black tracking-widest">
                     <tr>
-                      <th className="px-10 py-6">Descrição da Conta</th>
-                      <th className="px-10 py-6">Valor Individual</th>
-                      {isAdmin && viewMode === 'admin' && <th className="px-10 py-6 text-right">Ação</th>}
+                      <th className="px-10 py-6">Descrição</th>
+                      <th className="px-10 py-6">Valor Rateio</th>
+                      {isAdmin && viewMode === 'admin' && <th className="px-10 py-6 text-right">Acção</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {bills.length === 0 ? (
-                      <tr><td colSpan={3} className="px-10 py-20 text-center text-slate-300 italic font-medium">Nenhum gasto registrado para este período.</td></tr>
+                      <tr><td colSpan={3} className="px-10 py-20 text-center text-slate-300 italic font-medium">Sem gastos registados para este mês.</td></tr>
                     ) : (
                       bills.map(bill => (
                         <tr key={bill.id} className="hover:bg-blue-50/20 transition-colors group">
                           <td className="px-10 py-6">
                             <p className="font-black text-slate-700 text-lg">{bill.description}</p>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Registrado em {new Date(bill.createdAt).toLocaleDateString()}</p>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Em {new Date(bill.createdAt).toLocaleDateString()}</p>
                           </td>
                           <td className="px-10 py-6 font-mono font-black text-slate-900 text-xl">R$ {Number(bill.value).toFixed(2)}</td>
                           {isAdmin && viewMode === 'admin' && (
                             <td className="px-10 py-6 text-right">
-                              <button onClick={() => removeBill(bill.id)} className="bg-red-50 text-red-400 p-3 rounded-xl hover:text-red-600 hover:bg-red-100 transition-all opacity-0 group-hover:opacity-100 active:scale-90">
+                              <button onClick={() => removeBill(bill.id)} className="bg-red-50 text-red-400 p-3 rounded-xl hover:text-red-600 transition-all opacity-0 group-hover:opacity-100 active:scale-90">
                                 <Trash2 size={20} />
                               </button>
                             </td>
@@ -402,11 +383,12 @@ const App: React.FC = () => {
             </section>
           </div>
 
+          {/* Barra Lateral (Moradores e Caixinha) */}
           <div className="space-y-10">
-            {/* Lista de Moradores */}
+            {/* Secção de Moradores */}
             <section className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100">
               <h2 className="text-xl font-black mb-8 text-slate-800 uppercase tracking-tight flex items-center gap-3">
-                <Users className="text-blue-600" size={24} /> Moradores
+                <Users size={24} className="text-blue-600" /> Moradores
               </h2>
               <div className="space-y-4">
                 {residents.map(res => (
@@ -429,22 +411,22 @@ const App: React.FC = () => {
               </div>
             </section>
 
-            {/* Controle da Caixinha (Admin apenas) */}
+            {/* Gestão da Caixinha (Apenas Admin) */}
             {isAdmin && viewMode === 'admin' && (
               <section className="bg-white p-10 rounded-[3rem] shadow-sm border border-slate-100 animate-in slide-in-from-bottom-6 duration-700">
                 <h2 className="text-xl font-black mb-8 text-amber-500 uppercase tracking-tight flex items-center gap-3">
                   <PiggyBank size={24} /> Gestão Caixinha
                 </h2>
                 <form onSubmit={addCaixinhaAction} className="space-y-5">
-                  <input type="text" placeholder="Motivo da movimentação..." className="w-full p-5 bg-slate-50 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-amber-50 transition-all" value={newCaixinha.description} onChange={e => setNewCaixinha({...newCaixinha, description: e.target.value})} />
+                  <input type="text" placeholder="Motivo..." className="w-full p-5 bg-slate-50 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-amber-50 transition-all" value={newCaixinha.description} onChange={e => setNewCaixinha({...newCaixinha, description: e.target.value})} />
                   <div className="flex gap-3">
                     <input type="number" placeholder="Valor" className="w-2/3 p-5 bg-slate-50 rounded-2xl font-black outline-none focus:ring-4 focus:ring-amber-50 transition-all" value={newCaixinha.value} onChange={e => setNewCaixinha({...newCaixinha, value: e.target.value})} />
-                    <select className="w-1/3 p-4 bg-slate-100 rounded-2xl font-black text-[10px] outline-none cursor-pointer hover:bg-slate-200 transition-colors" value={newCaixinha.type} onChange={e => setNewCaixinha({...newCaixinha, type: e.target.value as any})}>
+                    <select className="w-1/3 p-4 bg-slate-100 rounded-2xl font-black text-[10px] outline-none cursor-pointer" value={newCaixinha.type} onChange={e => setNewCaixinha({...newCaixinha, type: e.target.value as any})}>
                       <option value="credit">ENTRADA</option>
                       <option value="debit">SAÍDA</option>
                     </select>
                   </div>
-                  <button type="submit" className="w-full bg-amber-500 text-white p-5 rounded-2xl font-black hover:bg-amber-600 transition-all shadow-xl shadow-amber-100 active:scale-95">REGISTRAR NA CAIXINHA</button>
+                  <button type="submit" className="w-full bg-amber-500 text-white p-5 rounded-2xl font-black hover:bg-amber-600 transition-all shadow-xl shadow-amber-100 active:scale-95">REGISTAR</button>
                 </form>
               </section>
             )}
