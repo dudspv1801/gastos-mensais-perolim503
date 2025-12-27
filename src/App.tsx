@@ -271,7 +271,7 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div className="p-4 bg-slate-900 text-white rounded-3xl"><Users size={32} /></div>
             <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Gestão Perolim 503</h1>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Contas do Apartamento 21</h1>
               <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-xl mt-2 border border-slate-100">
                 <button onClick={() => setSelectedDate(new Date(selectedDate.setMonth(selectedDate.getMonth() - 1)))} className="p-1 hover:bg-white rounded-md transition-colors"><ChevronLeft size={16}/></button>
                 <span className="text-[10px] font-black uppercase text-slate-500 w-24 text-center">{selectedDate.toLocaleString('pt-BR', { month: 'short', year: 'numeric' })}</span>
