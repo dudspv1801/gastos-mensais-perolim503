@@ -118,7 +118,7 @@ export default function App() {
 
   const isAdmin = useMemo(() => user?.email === ADMIN_EMAIL, [user]);
 
-  // 1. Auth Logic
+  // 1. Lógica de Autenticação
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
@@ -129,7 +129,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Data Sync
+  // 2. Sincronização de Dados
   useEffect(() => {
     if (!user) return;
     const billsRef = collection(db, 'artifacts', APTO_ID, 'public', 'data', 'bills');
@@ -181,8 +181,8 @@ export default function App() {
     const totalRent = getSum('rent');
     const totalShared = getSum('shared');
     const totalParking = getSum('parking');
-    const totalHouseSupplies = getSum('house_supplies'); // O valor que todos vão pagar (budgeted)
-    const realHouseSupplies = getActualSum('house_supplies'); // O valor que o Menon realmente gastou
+    const totalHouseSupplies = getSum('house_supplies'); 
+    const realHouseSupplies = getActualSum('house_supplies'); 
 
     const rentPerWeight = totalWeight > 0 ? totalRent / totalWeight : 0;
     const sharedPerPerson = residents.length > 0 ? (totalShared + totalHouseSupplies) / residents.length : 0;
@@ -271,7 +271,7 @@ export default function App() {
           <div className="flex items-center gap-4">
             <div className="p-4 bg-slate-900 text-white rounded-3xl"><Users size={32} /></div>
             <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Contas do Apartamento 21</h1>
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Gestão Perolim 503</h1>
               <div className="flex items-center gap-4 bg-slate-50 p-1.5 rounded-xl mt-2 border border-slate-100">
                 <button onClick={() => setSelectedDate(new Date(selectedDate.setMonth(selectedDate.getMonth() - 1)))} className="p-1 hover:bg-white rounded-md transition-colors"><ChevronLeft size={16}/></button>
                 <span className="text-[10px] font-black uppercase text-slate-500 w-24 text-center">{selectedDate.toLocaleString('pt-BR', { month: 'short', year: 'numeric' })}</span>
@@ -300,11 +300,10 @@ export default function App() {
         </header>
 
         {/* Dashboard */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
           <StatCard title="Cobrado no Mês" value={totals.totalCharged} icon={<Receipt />} color="indigo" />
           <StatCard title="Pendente Receber" value={totals.breakdown.reduce((acc, r) => acc + (!r.isReceived ? r.total : 0), 0)} icon={<Clock />} color="blue" />
           <StatCard title="Saldo Excedente" value={caixinhaBalance} icon={<PiggyBank />} color={caixinhaBalance < 0 ? "red" : "amber"} subtitle="Acumulado Caixinha" />
-          <StatCard title="Crédito Menon" value={totals.breakdown.find(r => r.name === 'Menon')?.credit || 0} icon={<ShoppingCart />} color="emerald" subtitle="Reembolso Compras" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
